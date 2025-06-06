@@ -1,0 +1,18 @@
+---
+- name: Playbook for OS Patching
+  hosts: all
+  become: false
+  gather_facts: true
+
+  tasks:
+    - name: Include steps for Linux
+      ansible.builtin.include_tasks:
+        file: linux.yml
+      when:
+        - linux in hostvar
+        - ansible_os_family == "Ubuntu"
+
+    - name: Include steps for Windows
+      ansible.builtin.include_tasks:
+        file: windows.yml
+      when: windows in hostvar
