@@ -1,0 +1,116 @@
+---
+#=====================================
+# Gather facts and set custom ones
+#=====================================
+- name: "Set patching_time"
+  ansible.builtin.set_fact:
+    timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: "Display logging directories"
+  ansible.builtin.debug:
+    msg:
+      - "Remote logging dir: {{ remote_dir }}"
+      - "Local logging dir: {{ activity_logs }}"
+
+- name: "Create temp log directory"
+  ansible.windows.win_file:
+    path: "{{ activity_logs }}"
+    state: directory
+
+#=====================================
+# Pre-update system information
+#=====================================
+- name: "Set pre-update os_info"
+  ansible.builtin.set_fact:
+    os_info_pre_update:
+      os_name: "{{ ansible_os_name }}"
+      os_version: "{{ ansible_os_version }}"
+      kernel: "{{ ansible_kernel }}"
+      architecture: "{{ ansible_architecture }}"
+
+- name: "Current OS version information before the update"
+  ansible.builtin.blockinfile:
+    block: |
+      HOSTNAME: "{{ inventory_hostname }}" version before the update:
+            os_name: "{{ os_info_pre_update.os_name }}"
+            os_version: "{{ os_info_pre_update.os_version }}"
+            kernel: "{{ os_info_pre_update.kernel }}"
+            architecture: "{{ os_info_pre_update.architecture }}"
+    dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.OK.{{ timestamp }}"
+    create: yes
+    marker: " "
+
+#=====================================
+# Patch the system
+#=====================================
+- name: "Check for available Windows updates"
+  ansible.windows.win_updates:
+    state: searched
+  register: update_search
+
+- name: "Log available updates"
+  ansible.builtin.lineinfile:
+    line: "HOSTNAME: {{ inventory_hostname }} | Updates available: {{ update_search.updates | map(attribute='title') | list }}"
+    dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.win.{{ timestamp }}"
+    create: yes
+
+- name: "Install all available Windows updates"
+  ansible.windows.win_updates:
+    state: installed
+    reboot: yes
+  register: update_result
+
+- name: "Log update installation result"
+  ansible.builtin.lineinfile:
+    line: "HOSTNAME: {{ inventory_hostname }} | Updates installed: {{ update_result.updates | map(attribute='title') | list }} | Reboot required: {{ update_result.reboot_required }}"
+    dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.win.{{ timestamp }}"
+    create: yes
+
+- name: "Reboot if required"
+  ansible.windows.win_reboot:
+    msg: "Rebooting to complete patch installation."
+    pre_reboot_delay: 60
+    post_reboot_delay: 120
+  when: update_result.reboot_required
+
+#=====================================
+# Post-update system information
+#=====================================
+- name: "Gather facts after update"
+  ansible.builtin.setup:
+    filter: ansible_os*
+
+- name: "Set post update os info"
+  ansible.builtin.set_fact:
+    os_info_post_update:
+      os_name: "{{ ansible_os_name }}"
+      os_version: "{{ ansible_os_version }}"
+      kernel: "{{ ansible_kernel }}"
+      architecture: "{{ ansible_architecture }}"
+
+- name: "Current OS version information after the update"
+  ansible.builtin.blockinfile:
+    block: |
+      HOSTNAME: "{{ inventory_hostname }}" version after the update:
+            os_name: "{{ os_info_post_update.os_name }}"
+            os_version: "{{ os_info_post_update.os_version }}"
+            kernel: "{{ os_info_post_update.kernel }}"
+            architecture: "{{ os_info_post_update.architecture }}"
+    dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.OK.{{ timestamp }}"
+    create: yes
+    marker: " "
+
+#=====================================
+# Create log files
+#=====================================
+- name: "Assemble fragments from a directory"
+  ansible.builtin.assemble:
+    src: "{{ activity_logs }}"
+    dest: "{{ final_report }}"
+
+- name: "Display the final report"
+  ansible.builtin.debug:
+    msg: "Final report: {{ final_report }}"
+
