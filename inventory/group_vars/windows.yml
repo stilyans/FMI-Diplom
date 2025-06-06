@@ -1,0 +1,14 @@
+---
+ansible_user: "{{ windows_user }}"
+ansible_password: "{{ windows_password }}"
+ansible_become: false
+ansible_become_method: runas
+ansible_become_user: "{{ windows_user }}"
+ansible_become_password: "{{ windows_password }}"
+ansible_connection: winrm
+ansible_port: 5985
+ansible_winrm_server_cert_validation: ignore
+ansible_winrm_operation_timeout_sec: 600
+ansible_winrm_read_timeout_sec: 601
+ansible_winrm_kerberos_delegation: true
+ansible_winrm_transport: ntlm
