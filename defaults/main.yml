@@ -1,4 +1,0 @@
----
-activity_logs: "/tmp/ansible_patching/"
-remote_dir: "/home/ansible/logs/"
-confirm_update: true
