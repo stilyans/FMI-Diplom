@@ -11,8 +11,7 @@
 - name: "Display logging directories"
   ansible.builtin.debug:
     msg:
-      - "Remote logging dir: {{ remote_dir }}"
-      - "Local logging dir: {{ activity_logs }}"
+      - "Logging dir on Ansible server: {{ activity_logs }}"
 
 - name: "Gather the package facts"
   ansible.builtin.package_facts:
@@ -40,14 +39,16 @@
   ansible.builtin.blockinfile:
     block: |
       HOSTNAME: "{{ inventory_hostname }}" version before the update:
-            distribution: "{{ os_info_pre_update.distribution  }}"
-            distribution_major_version: "{{ os_info_pre_update.distribution_major_version }}"
-            distribution_release: "{{ os_info_pre_update.distribution_release }}"
-            distribution_version: "{{ os_info_pre_update.distribution_version }}"
-            kernel_version: "{{ ansible_kernel }}"
-    dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.OK.{{ timestamp }}"
+        distribution: "{{ os_info_pre_update.distribution  }}"
+        distribution_major_version: "{{ os_info_pre_update.distribution_major_version }}"
+        distribution_release: "{{ os_info_pre_update.distribution_release }}"
+        distribution_version: "{{ os_info_pre_update.distribution_version }}"
+        kernel_version: "{{ ansible_kernel }}"
+    dest: "{{ activity_logs }}update_{{ inventory_hostname }}_{{ timestamp }}"
     create: yes
     marker: " "
+  delegate_to: localhost
+  become: false
 
 - name: "Return service state information"
   ansible.builtin.service_facts:
@@ -86,14 +87,16 @@
 
 - name: "Display patches for installation and removal"
   ansible.builtin.apt:
-    list: updates
+    upgrade: safe
   register: patch_status
 
 - name: "Log patches for installation and removal"
   ansible.builtin.lineinfile:
-    line: "HOSTNAME: {{ inventory_hostname }} | Patches to install and remove: {{ patch_status }}"
-    dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.apt.{{ timestamp }}"
+    line: "HOSTNAME: {{ inventory_hostname }} | Patches to install and remove: {{ patch_status.stdout_lines }}"
+    dest: "{{ activity_logs }}update_{{ inventory_hostname }}_{{ timestamp }}"
     create: yes
+  delegate_to: localhost
+  become: false
 
 - name: "Install latest apt packages"
   ansible.builtin.apt:
@@ -110,8 +113,10 @@
   - name: "Log if apt update fails"
     ansible.builtin.lineinfile:
       line: "HOSTNAME: {{ inventory_hostname }} | apt update failed, PLEASE CHECK THE SERVER"
-      dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.apt.{{ timestamp }}"
+      dest: "{{ activity_logs }}update_{{ inventory_hostname }}_{{ timestamp }}"
       create: yes
+    delegate_to: localhost
+    become: false
 
   - name: "Apt failed"
     ansible.builtin.debug:
@@ -121,13 +126,15 @@
 - block:
   - name: "Log if there is nothing to update"
     ansible.builtin.lineinfile:
-      line: "HOSTNAME: {{ inventory_hostname }} |  Nothing to update."
-      dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.apt.{{ timestamp }}"
+      line: "HOSTNAME: {{ inventory_hostname }} | Nothing to update."
+      dest: "{{ activity_logs }}update_{{ inventory_hostname }}_{{ timestamp }}"
       create: yes
+    delegate_to: localhost
+    become: false
 
   - name: "Nothing to update"
     ansible.builtin.debug:
-      msg: "HOSTNAME: {{ inventory_hostname }} |  Nothing to update."
+      msg: "HOSTNAME: {{ inventory_hostname }} | Nothing to update."
     notify:
       - Reboot system
     changed_when: true
@@ -137,8 +144,10 @@
   - name: "Log if apt update succeedes"
     ansible.builtin.lineinfile:
       line: "HOSTNAME: {{ inventory_hostname }} | apt update succeeded: {{ apt_result.stdout_lines }}"
-      dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.apt.{{ timestamp }}"
+      dest: "{{ activity_logs }}update_{{ inventory_hostname }}_{{ timestamp }}"
       create: yes
+    delegate_to: localhost
+    become: false
 
   - name: "Update is done"
     ansible.builtin.debug:
@@ -170,22 +179,26 @@
   - name: "Creating a report when services are started successfully"
     ansible.builtin.lineinfile:
       line: "HOSTNAME: {{ inventory_hostname }} | {{ item }} : OK "
-      dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.OK.{{ timestamp }}"
+      dest: "{{ activity_logs }}update_{{ inventory_hostname }}_{{ timestamp }}"
       create: yes
     when: ansible_facts.services[item]['state'] == "running" and start_failed is not failed
     loop: "{{ ansible_facts.services.keys() | list }}"
+    delegate_to: localhost
+    become: false
 
   rescue:
     - name: "Send error msg if starting of service failed"
       ansible.builtin.lineinfile:
         line: "HOSTNAME: {{ inventory_hostname }} | {{ item.item }} : KO Please check it"
-        dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.FAILED.{{ timestamp }}"
+        dest: "{{ activity_logs }}update_{{ inventory_hostname }}_{{ timestamp }}"
         create: yes
       when:
         - item.skipped is not defined
         - item.state is not defined
         - item.failed == true
       loop: "{{ start_failed.results }}"
+      delegate_to: localhost
+      become: false
 
 - block:
   - name: "Check if the FS is mounted"
@@ -197,19 +210,23 @@
   - name: "Creating a report when all the FSs are mounted successfully"
     ansible.builtin.lineinfile:
       line: "HOSTNAME: {{ inventory_hostname }} | {{ item.stdout }} : MOUNTED "
-      dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.OK.{{ timestamp }}"
+      dest: "{{ activity_logs }}update_{{ inventory_hostname }}_{{ timestamp }}"
       create: yes
     when: item.rc == 0
     loop: "{{ fs_checked.results }}"
+    delegate_to: localhost
+    become: false
 
   rescue:
     - name: "Send Error msg if mounting failed"
       ansible.builtin.lineinfile:
         line: "HOSTNAME: {{ inventory_hostname }} | {{ item.item }} : ****NOT MOUNTED***** "
-        dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.FAILED.{{ timestamp }}"
+        dest: "{{ activity_logs }}update_{{ inventory_hostname }}_{{ timestamp }}"
         create: yes
       when: item.rc != 0
       loop: "{{ fs_checked.results }}"
+      delegate_to: localhost
+      become: false
 
 - name: "Gather facts after update"
   ansible.builtin.setup:
@@ -230,17 +247,21 @@
   - name: "Creating a report when the interfaces are active"
     ansible.builtin.lineinfile:
       line: "HOSTNAME: {{ inventory_hostname }} | interface {{ item.item }} : OK  "
-      dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.OK.{{ timestamp }}"
+      dest: "{{ activity_logs }}update_{{ inventory_hostname }}_{{ timestamp }}"
       create: yes
     loop: "{{ NIC_interface['results'] }}"
+    delegate_to: localhost
+    become: false
   when: item.skip_reason is not defined
 
   rescue:
     - name: "Send error msg if one or more interface are not active"
       ansible.builtin.lineinfile:
         line: "HOSTNAME: {{ inventory_hostname }} | interface {{ item.item }} : ****NOT ACTIVE**** "
-        dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.FAILED.{{ timestamp }}"
+        dest: "{{ activity_logs }}update_{{ inventory_hostname }}_{{ timestamp }}"
         create: yes
+      delegate_to: localhost
+      become: false
 
 - block:
   - name: "Assert that the interface IP address does not change"
@@ -251,17 +272,21 @@
   - name: "Creating a report when the interface IP is OK"
     ansible.builtin.lineinfile:
       line: "HOSTNAME: {{ inventory_hostname }} | interface {{ item.item.item }} : {{ item.msg }} : OK  "
-      dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.OK.{{ timestamp }}"
+      dest: "{{ activity_logs }}update_{{ inventory_hostname }}_{{ timestamp }}"
       create: yes
     loop: "{{ NIC_IP['results'] }}"
+    delegate_to: localhost
+    become: false
   when: item.skip_reason is not defined
 
   rescue:
     - name: "Send error msg if IP address has changed"
       ansible.builtin.lineinfile:
         line: "HOSTNAME: {{ inventory_hostname }} | interface {{ item.item.item }} :  PLEASE CHECK THE IP ADDRESS"
-        dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.FAILED.{{ timestamp }}"
+        dest: "{{ activity_logs }}update_{{ inventory_hostname }}_{{ timestamp }}"
         create: yes
+      delegate_to: localhost
+      become: false
 
 - name: "Set post update os info"
   ansible.builtin.set_fact:
@@ -274,28 +299,19 @@
 
 - name: "Current OS version information before the update"
   ansible.builtin.blockinfile:
-      block: |
-        HOSTNAME: "{{ inventory_hostname }}" version After the update:
-              distribution: "{{ os_info_post_update.distribution  }}"
-              distribution_major_version: "{{ os_info_post_update.distribution_major_version }}"
-              distribution_release: "{{ os_info_post_update.distribution_release }}"
-              distribution_version: "{{ os_info_post_update.distribution_version }}"
-              kernel_version: "{{ ansible_kernel }}"
-      dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.OK.{{ timestamp }}"
-      create: yes
+    block: |
+      HOSTNAME: "{{ inventory_hostname }}" version After the update:
+        distribution: "{{ os_info_post_update.distribution  }}"
+        distribution_major_version: "{{ os_info_post_update.distribution_major_version }}"
+        distribution_release: "{{ os_info_post_update.distribution_release }}"
+        distribution_version: "{{ os_info_post_update.distribution_version }}"
+        kernel_version: "{{ ansible_kernel }}"
+    dest: "{{ activity_logs }}update_{{ inventory_hostname }}_{{ timestamp }}"
+    create: yes
+  delegate_to: localhost
+  become: false
 
-#=====================================
-# Create log files
-#=====================================
-- name: "Set final report fact"
+- name: "Set fact for attachment"
   ansible.builtin.set_fact:
-    final_report: "{{ activity_logs }}Patching_{{inventory_hostname}}_{{timestamp}}.txt"
-
-- name: "Assemble fragments from a directory"
-  ansible.builtin.assemble:
-    src: "{{ activity_logs }}"
-    dest: "{{ final_report }}"
-
-- name: "Display the final report"
-  ansible.builtin.debug:
-    msg: "Final report: {{ final_report }}"
+    attachment_file: "{{ activity_logs }}update_{{ inventory_hostname }}_{{ timestamp }}"
+  delegate_to: localhost
