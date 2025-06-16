@@ -1,18 +1,78 @@
 ---
 - name: Playbook for OS Patching
   hosts: all
-  become: false
+  become: true
   gather_facts: true
 
+  handlers:
+    - name: Reboot system
+      ansible.builtin.reboot:
+        reboot_timeout: 2400
+        msg: "Reboot initiated by Ansible after system update"
+
   tasks:
+    - name: Display OS family
+      ansible.builtin.debug:
+        var: ansible_os_family
+
+          #- debug:
+          #var: ansible_facts
+
     - name: Include steps for Linux
       ansible.builtin.include_tasks:
         file: linux.yml
-      when:
-        - linux in hostvar
-        - ansible_os_family == "Ubuntu"
+      when: ansible_os_family == "Debian"
 
     - name: Include steps for Windows
       ansible.builtin.include_tasks:
         file: windows.yml
-      when: windows in hostvar
+      when: ansible_os_family != "Debian"
+
+    - name: Read file and base64 encode it
+      slurp:
+        src: "{{ attachment_file }}"
+      register: attachment_path
+      delegate_to: localhost
+      become: false
+
+    - name: Send email notification
+      ansible.builtin.uri:
+        url: https://api.mailjet.com/v3.1/send
+        method: POST
+        force_basic_auth: yes
+        url_username: "{{ mailjet_api_key }}"
+        url_password: "{{ mailjet_api_secret }}"
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          Messages:
+            - From:
+                Email: "stilyanslavkov@abv.bg"
+                Name: "Ansible Automation"
+              To:
+                - Email: "stenle1313@gmail.com"
+                  Name: "Recepient"
+              Subject: "[FMI] Ansible Automation notification"
+              TextPart: "Ansible notification: Patching completed successfully for {{ inventory_hostname }}"
+              Attachments:
+                - ContentType: "text/plain"
+                  Filename: "patch-report-{{ inventory_hostname }}.txt"
+                  Base64Content: "{{ attachment_path.content }}"
+      delegate_to: localhost
+      become: false
+      no_log: true
+
+        #    - name: Send email notification via SMTP
+        #      mail:
+        #        host: in-v3.mailjet.com
+        #        port: 587
+        #        username: "{{ mailjet_api_key }}"
+        #        password: "{{ mailjet_api_secret }}"
+        #        secure: starttls
+        #        from: "Ansible Automation <stilyanslavkov@abv.bg>"
+        #        to: slavkov30@gmail.com
+        #        subject: "[FMI] Ansible notification"
+        #        body: "Patching completed successfully for {{ inventory_hostname }}"
+        #      delegate_to: localhost
+        #      become: false
