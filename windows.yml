@@ -26,58 +26,171 @@
   ansible.builtin.set_fact:
     os_info_pre_update:
       os_name: "{{ ansible_os_name }}"
-      os_version: "{{ ansible_os_version }}"
       kernel: "{{ ansible_kernel }}"
       architecture: "{{ ansible_architecture }}"
 
 - name: "Current OS version information before the update"
-  ansible.builtin.blockinfile:
-    block: |
-      HOSTNAME: "{{ inventory_hostname }}" version before the update:
-            os_name: "{{ os_info_pre_update.os_name }}"
-            os_version: "{{ os_info_pre_update.os_version }}"
-            kernel: "{{ os_info_pre_update.kernel }}"
-            architecture: "{{ os_info_pre_update.architecture }}"
-    dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.OK.{{ timestamp }}"
+  community.windows.win_lineinfile:
+    line: |
+      HOSTNAME: {{ inventory_hostname }} version before the update:
+        os_name: {{ os_info_pre_update.os_name }}
+        kernel: {{ os_info_pre_update.kernel }}
+        architecture: {{ os_info_pre_update.architecture }}
+    path: "{{ activity_logs }}\\update_{{ inventory_hostname }}_{{ timestamp }}"
     create: yes
-    marker: " "
+
+- name: "Get info for all installed services"
+  ansible.windows.win_service_info:
+  register: service_info
+
+- name: "Display service list"
+  ansible.builtin.debug:
+    msg: "FACTS: {{ service_info.services }}"
+
+- name: Get disk facts
+  community.windows.win_disk_facts:
+  register: drive_list_before
+
+- name: "Show drives"
+  ansible.builtin.debug:
+    var: item
+  loop: "{{ drive_list_before.ansible_facts.ansible_disks }}"
+
+- name: "Log mounted drives"
+  community.windows.win_lineinfile:
+    line: "HOSTNAME: {{ inventory_hostname }} | {{ item.physical_disk.friendly_name }} : MOUNTED BEFORE UPDATE"
+    dest: "{{ activity_logs }}\\update_{{ inventory_hostname }}_{{ timestamp }}"
+    create: yes
+  loop: "{{ drive_list_before.ansible_facts.ansible_disks }}"
+
+- name: Show active interfaces with IPv4
+  ansible.builtin.debug:
+    msg: "{{ item }}"
+  loop: "{{ ansible_facts.interfaces }}"
+  when: ansible_facts.interfaces.ipv4 is defined
+
+- name: Show IP addresses
+  ansible.builtin.debug:
+    msg: "{{ item }}"
+  loop: "{{ ansible_facts.ip_addresses }}"
 
 #=====================================
 # Patch the system
 #=====================================
 - name: "Check for available Windows updates"
   ansible.windows.win_updates:
-    state: searched
+    state: downloaded
   register: update_search
 
 - name: "Log available updates"
-  ansible.builtin.lineinfile:
-    line: "HOSTNAME: {{ inventory_hostname }} | Updates available: {{ update_search.updates | map(attribute='title') | list }}"
-    dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.win.{{ timestamp }}"
+  community.windows.win_lineinfile:
+    line: "HOSTNAME: {{ inventory_hostname }} | Updates available: {{ update_search.updates }}"
+    path: "{{ activity_logs }}\\update_{{ inventory_hostname }}_{{ timestamp }}"
     create: yes
 
 - name: "Install all available Windows updates"
   ansible.windows.win_updates:
-    state: installed
+    category_names: '*'
     reboot: yes
+    reboot_timeout: 3600
   register: update_result
 
 - name: "Log update installation result"
-  ansible.builtin.lineinfile:
-    line: "HOSTNAME: {{ inventory_hostname }} | Updates installed: {{ update_result.updates | map(attribute='title') | list }} | Reboot required: {{ update_result.reboot_required }}"
-    dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.win.{{ timestamp }}"
+  community.windows.win_lineinfile:
+    line: "HOSTNAME: {{ inventory_hostname }} | Updates installed: {{ update_result.updates }}"
+    path: "{{ activity_logs }}\\update_{{ inventory_hostname }}_{{ timestamp }}"
     create: yes
-
-- name: "Reboot if required"
-  ansible.windows.win_reboot:
-    msg: "Rebooting to complete patch installation."
-    pre_reboot_delay: 60
-    post_reboot_delay: 120
-  when: update_result.reboot_required
 
 #=====================================
 # Post-update system information
 #=====================================
+- block:
+  - name: "Ensure all services are started"
+    ansible.windows.win_service:
+      name: "{{ item.name }}"
+      start_mode: auto
+      state: started
+    when:
+      - item.state == 'started'
+      - item.name not in ['BFE', 'BrokerInfrastructure', 'cbdhsvc_2b8753', 'CoreMessagingRegistrar', 'DcomLaunch', 'Dnscache', 'gpsvc', 'LSM', 'mpssvc', 'RpcEptMapper', 'RpcSs', 'Schedule', 'SystemEventsBroker', 'TimeBrokerSvc', 'WdNisSvc', 'WinDefend', 'WinHttpAutoProxySvc']
+    loop: "{{ service_info.services }}"
+    loop_control:
+      label: "{{ item.name }}"
+    register: start_failed
+    ignore_errors: true
+    become: true
+
+  - name: "Show service start status"
+    ansible.builtin.debug:
+      var: start_failed
+
+  - name: "Save service start results to fact for rescue block"
+    ansible.builtin.set_fact:
+      service_start_results: "{{ start_failed.results }}"
+
+  - name: "Create success report for started services"
+    community.windows.win_lineinfile:
+      line: "HOSTNAME: {{ inventory_hostname }} | {{ item.item.name }} : OK"
+      path: "{{ activity_logs }}\\update_{{ inventory_hostname }}_{{ timestamp }}"
+      create: yes
+    loop: "{{ start_failed.results }}"
+    when: not item.failed | default(false)
+    loop_control:
+      label: "{{ item.item.name }}"
+
+        #  rescue:
+  - name: "Report failed service start"
+    community.windows.win_lineinfile:
+      line: "HOSTNAME: {{ inventory_hostname }} | {{ item.item.name }} : KO Please check it"
+      path: "{{ activity_logs }}\\update_{{ inventory_hostname }}_{{ timestamp }}"
+      create: yes
+    loop: "{{ service_start_results }}"
+    when: item.failed | default(false)
+    loop_control:
+      label: "{{ item.item.name }}"
+
+- name: Get disk facts
+  community.windows.win_disk_facts:
+  register: drive_list_after
+
+- name: "Show drives"
+  ansible.builtin.debug:
+    var: item
+  loop: "{{ drive_list_after.ansible_facts.ansible_disks }}"
+
+- name: "Log mounted drives"
+  community.windows.win_lineinfile:
+    line: "HOSTNAME: {{ inventory_hostname }} | {{ item.physical_disk.friendly_name }} : MOUNTED AFTER UPDATE"
+    dest: "{{ activity_logs }}\\update_{{ inventory_hostname }}_{{ timestamp }}"
+    create: yes
+  loop: "{{ drive_list_after.ansible_facts.ansible_disks }}"
+
+- block:
+    - name: "Assert interface is Up"
+      ansible.builtin.assert:
+        that: item.speed is defined
+        fail_msg: "Interface {{ item.connection_name }} is not active"
+      loop: "{{ ansible_facts.interfaces }}"
+      loop_control:
+        label: "{{ item.connection_name }}"
+
+    - name: "Report active interfaces"
+      community.windows.win_lineinfile:
+        line: "HOSTNAME: {{ inventory_hostname }} | interface {{ item.connection_name }} : OK"
+        dest: "{{ activity_logs }}\\update_{{ inventory_hostname }}_{{ timestamp }}"
+        create: yes
+      loop: "{{ ansible_facts.interfaces }}"
+      when: item.speed is defined
+
+  rescue:
+    - name: "Report inactive interfaces"
+      community.windows.win_lineinfile:
+        line: "HOSTNAME: {{ inventory_hostname }} | interface {{ item.connection_name }} : ****NOT ACTIVE****"
+        dest: "{{ activity_logs }}\\update_{{ inventory_hostname }}_{{ timestamp }}"
+        create: yes
+      loop: "{{ ansible_facts.interfaces }}"
+      when: item.speed not defined
+
 - name: "Gather facts after update"
   ansible.builtin.setup:
     filter: ansible_os*
@@ -86,31 +199,37 @@
   ansible.builtin.set_fact:
     os_info_post_update:
       os_name: "{{ ansible_os_name }}"
-      os_version: "{{ ansible_os_version }}"
       kernel: "{{ ansible_kernel }}"
       architecture: "{{ ansible_architecture }}"
 
 - name: "Current OS version information after the update"
-  ansible.builtin.blockinfile:
-    block: |
-      HOSTNAME: "{{ inventory_hostname }}" version after the update:
-            os_name: "{{ os_info_post_update.os_name }}"
-            os_version: "{{ os_info_post_update.os_version }}"
-            kernel: "{{ os_info_post_update.kernel }}"
-            architecture: "{{ os_info_post_update.architecture }}"
-    dest: "{{ activity_logs }}/update.{{ inventory_hostname }}.OK.{{ timestamp }}"
+  community.windows.win_lineinfile:
+    line: |
+      HOSTNAME: {{ inventory_hostname }} version after the update:
+        os_name: {{ os_info_post_update.os_name }}
+        kernel: {{ os_info_post_update.kernel }}
+        architecture: {{ os_info_post_update.architecture }}
+    path: "{{ activity_logs }}\\update_{{ inventory_hostname }}_{{ timestamp }}"
     create: yes
-    marker: " "
 
 #=====================================
-# Create log files
+# Copy logs to Ansible
 #=====================================
-- name: "Assemble fragments from a directory"
-  ansible.builtin.assemble:
-    src: "{{ activity_logs }}"
-    dest: "{{ final_report }}"
+- name: "Set final report fact"
+  ansible.builtin.set_fact:
+    final_report: "{{ activity_logs }}\\update_{{ inventory_hostname }}_{{ timestamp }}"
+
+- name: "Copy logs to Ansible"
+  ansible.builtin.fetch:
+    src: "{{ final_report }}"
+    dest: "{{ remote_dir }}"
+    flat: true
 
 - name: "Display the final report"
   ansible.builtin.debug:
     msg: "Final report: {{ final_report }}"
 
+- name: "Set fact for attachment"
+  ansible.builtin.set_fact:
+    attachment_file: "{{ remote_dir }}/update_{{ inventory_hostname }}_{{ timestamp }}"
+  delegate_to: localhost
