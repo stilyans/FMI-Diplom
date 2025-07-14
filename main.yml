@@ -14,16 +14,27 @@
     - name: Display OS family
       ansible.builtin.debug:
         var: ansible_os_family
+      tags: always
 
     - name: Include steps for Linux
       ansible.builtin.include_tasks:
         file: linux.yml
-      when: ansible_os_family == "Debian"
+      when: ansible_os_family == "Debian" or ansible_os_family == "RedHat"
+      tags: patch
 
     - name: Include steps for Windows
       ansible.builtin.include_tasks:
         file: windows.yml
-      when: ansible_os_family != "Debian"
+      when: ansible_os_family == "Windows"
+      tags: patch
+
+    - name: Check if attachment file exists
+      ansible.builtin.stat:
+        path: "{{ attachment_file }}"
+      register: attachment_stat
+      delegate_to: localhost
+      become: false
+      tags: report
 
     - name: Read file and base64 encode it
       slurp:
@@ -31,10 +42,12 @@
       register: attachment_path
       delegate_to: localhost
       become: false
+      when: attachment_stat.stat.exists
+      tags: report
 
-    - name: Send email notification
+    - name: Send email notification via Mailjet API
       ansible.builtin.uri:
-        url: https://api.mailjet.com/v3.1/send
+        url: "{{ mailjet_api_url }}"
         method: POST
         force_basic_auth: yes
         url_username: "{{ mailjet_api_key }}"
@@ -45,13 +58,13 @@
         body:
           Messages:
             - From:
-                Email: "stilyanslavkov@abv.bg"
+                Email: "{{ from }}"
                 Name: "Ansible Automation"
               To:
-                - Email: "stenle1313@gmail.com"
-                  Name: "Recepient"
-              Subject: "[FMI] Ansible Automation notification"
-              TextPart: "Ansible notification: Patching completed successfully for {{ inventory_hostname }}"
+                - Email: "{{ to }}"
+                  Name: "Recipient"
+              Subject: "{{ subject }}"
+              TextPart: "{{ body}}={{ inventory_hostname }}"
               Attachments:
                 - ContentType: "text/plain"
                   Filename: "patch-report-{{ inventory_hostname }}.txt"
@@ -60,16 +73,16 @@
       become: false
       no_log: true
 
-        #    - name: Send email notification via SMTP
+        #    - name: Send email notification via Mailjet SMTP server
         #      mail:
-        #        host: in-v3.mailjet.com
+        #        host: "{{ mailjet_host }}"
         #        port: 587
         #        username: "{{ mailjet_api_key }}"
         #        password: "{{ mailjet_api_secret }}"
         #        secure: starttls
-        #        from: "Ansible Automation <stilyanslavkov@abv.bg>"
-        #        to: slavkov30@gmail.com
-        #        subject: "[FMI] Ansible notification"
-        #        body: "Patching completed successfully for {{ inventory_hostname }}"
+        #        from: "Ansible Automation <{{ from }}>"
+        #        to: "{{ to }}"
+        #        subject: "{{ subject }}"
+        #        body: "{{ body}}={{ inventory_hostname }}"
         #      delegate_to: localhost
         #      become: false
