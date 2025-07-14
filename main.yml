@@ -14,19 +14,16 @@
     - name: Display OS family
       ansible.builtin.debug:
         var: ansible_os_family
-      tags: always
 
     - name: Include steps for Linux
       ansible.builtin.include_tasks:
         file: linux.yml
       when: ansible_os_family == "Debian" or ansible_os_family == "RedHat"
-      tags: patch
 
     - name: Include steps for Windows
       ansible.builtin.include_tasks:
         file: windows.yml
       when: ansible_os_family == "Windows"
-      tags: patch
 
     - name: Check if attachment file exists
       ansible.builtin.stat:
@@ -34,7 +31,6 @@
       register: attachment_stat
       delegate_to: localhost
       become: false
-      tags: report
 
     - name: Read file and base64 encode it
       slurp:
@@ -43,7 +39,6 @@
       delegate_to: localhost
       become: false
       when: attachment_stat.stat.exists
-      tags: report
 
     - name: Send email notification via Mailjet API
       ansible.builtin.uri:
