@@ -1,0 +1,9 @@
+---
+from: example@mail.com
+to: example@mail.com
+subject: "[FMI] Ansible Automation notification"
+body: 'Ansible notification: Patching completed successfully for'
+mailjet_api_url: 'https://api.mailjet.com/v3.1/send'
+mailjet_host: 'in-v3.mailjet.com'
+activity_logs: "/tmp/ansible-logs/"
+remote_dir: "/tmp/ansible-logs/"
