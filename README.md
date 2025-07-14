@@ -58,6 +58,7 @@ Run the main playbook with your inventory:
 ansible-playbook -i inventory/hosts.ini --limit linux main.yml --ask-vault-pass
 ansible-playbook -i inventory/hosts.ini --limit windows main.yml --ask-vault-pass
 ```
+Trigger the playbook with automated scheduling (e.g., via Ansible Tower/AWX or cron) for regular patching.
 
 ## Security
 - **Sensitive data** (API keys, passwords) must be stored in vault-encrypted files.
@@ -76,6 +77,14 @@ ansible-playbook -i inventory/hosts.ini --limit windows main.yml --ask-vault-pas
 - **Patching:** Updates packages, logs results, handles errors
 - **Post-update:** Validates services, filesystems, and interfaces, logs outcomes
 - **Reporting:** Assembles and displays a comprehensive report
+
+## Future Improvements
+- Add more granular reporting (e.g., patch CVE details, compliance status).
+- Enhance error handling and self-healing capabilities.
+- Provide a web dashboard for patch status and reporting.
+- Add integration with vulnerability management tools (e.g., Qualys, Nessus).
+- Support for patch rollback and snapshot/backup before patching.
+- Support for automatic start/stop in case the target host is powered off due to cost savings in the cloud.
 
 ## Authors
 - Stilyan Slavkov <slavkov30@gmail.com>
